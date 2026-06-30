@@ -3,7 +3,6 @@
 # Classes: Task, Pet, Schedule, Owner
 # Task and Pet use @dataclass for clean attribute declaration
 # Schedule and Owner use regular classes (mutable state, richer __init__ logic)
-# All methods are stubs (pass) — ready for implementation
 #
 # Revision notes:
 # - Added id fields to Task and Pet so remove methods can do reliable lookup
@@ -34,12 +33,12 @@ class Task:
     is_completed: bool = False
 
     def complete(self) -> None:
-        # TODO: set is_completed to True
-        pass
+        """Mark this task as completed."""
+        self.is_completed = True
 
     def reset(self) -> None:
-        # TODO: set is_completed back to False
-        pass
+        """Clear completion status so the task can be rescheduled."""
+        self.is_completed = False
 
 
 # --- Pet ---
@@ -55,12 +54,16 @@ class Pet:
     tasks: list[Task] = field(default_factory=list)  # populated via add_task
 
     def add_task(self, _task: Task) -> None:
-        # TODO: append _task to self.tasks
-        pass
+        """Append a task to this pet's task list."""
+        self.tasks.append(_task)
 
     def get_upcoming_tasks(self) -> list[Task]:
-        # TODO: return tasks where is_completed is False
-        pass
+        """Return all incomplete tasks for this pet."""
+        return [task for task in self.tasks if not task.is_completed]
+
+
+# Time-of-day ordering for sort key
+_TIME_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
 
 
 # --- Schedule ---
@@ -75,23 +78,42 @@ class Schedule:
         self.task_map: dict[str, tuple[Task, date]] = {}  # task.id -> (task, scheduled_date)
 
     def add_task(self, _task: Task, _date_time: date) -> None:
-        # TODO: store (_task, _date_time) in task_map keyed by _task.id
-        # TODO: also set _task.scheduled_at = _date_time
-        pass
+        """Register a task on a specific date and stamp its scheduled_at field."""
+        self.task_map[_task.id] = (_task, _date_time)
+        _task.scheduled_at = _date_time
 
     def remove_task(self, _task_id: str) -> None:
-        # TODO: delete task_map[_task_id] if it exists
-        pass
+        """Remove a task from the schedule by its id."""
+        self.task_map.pop(_task_id, None)
 
     def get_tasks_for_day(self, _day: date) -> list[Task]:
-        # TODO: return all tasks in task_map whose scheduled date == _day
-        # TODO: consider sorting by priority then preferred_time_of_day
-        pass
+        """Return tasks scheduled on _day, sorted by priority then time of day."""
+        tasks = [task for task, scheduled_date in self.task_map.values()
+                 if scheduled_date == _day]
+        return sorted(tasks, key=lambda t: (t.priority, _TIME_ORDER.get(t.preferred_time_of_day, 99)))
 
     def get_plan_rationale(self) -> str:
-        # TODO: return a human-readable string explaining why tasks were ordered/included
-        # e.g. "Morning walk scheduled first (priority 1, 30 min). Meds after breakfast..."
-        pass
+        """Return a human-readable summary of the scheduled tasks grouped by day."""
+        if not self.task_map:
+            return "No tasks scheduled."
+
+        lines = []
+        # Group by date so multi-day schedules are readable
+        days: dict[date, list[Task]] = {}
+        for task, scheduled_date in self.task_map.values():
+            days.setdefault(scheduled_date, []).append(task)
+
+        for day in sorted(days):
+            ordered = sorted(days[day], key=lambda t: (t.priority, _TIME_ORDER.get(t.preferred_time_of_day, 99)))
+            lines.append(f"--- {day} ---")
+            for rank, task in enumerate(ordered, start=1):
+                time_label = f" ({task.preferred_time_of_day})" if task.preferred_time_of_day else ""
+                lines.append(
+                    f"  {rank}. [{task.pet.name}] {task.title}{time_label} - "
+                    f"priority {task.priority}, ~{task.estimated_minutes} min"
+                )
+
+        return "\n".join(lines)
 
 
 # --- Owner ---
@@ -107,24 +129,40 @@ class Owner:
         self.schedule: Optional[Schedule] = None  # assigned when a schedule is generated
 
     def add_pet(self, _pet: Pet) -> None:
-        # TODO: append _pet to self.pets
-        pass
+        """Add a pet to this owner's roster."""
+        self.pets.append(_pet)
 
     def remove_pet(self, _pet_id: str) -> None:
-        # TODO: find and remove the pet where pet.id == _pet_id
-        pass
+        """Remove the pet matching _pet_id from the roster."""
+        self.pets = [pet for pet in self.pets if pet.id != _pet_id]
 
     def collect_all_tasks(self) -> list[Task]:
-        # TODO: iterate self.pets, flatten all pet.tasks into one list
-        # This feeds Schedule so it can plan across all pets in one pass
-        pass
+        """Flatten all tasks across every pet into a single list."""
+        return [task for pet in self.pets for task in pet.tasks]
 
     def get_schedule(self) -> Optional[Schedule]:
-        # TODO: return self.schedule
-        pass
+        """Return the most recently generated schedule, or None if none exists."""
+        return self.schedule
 
     def generate_daily_plan(self, _plan_date: date) -> Schedule:
-        # TODO: call collect_all_tasks(), filter to unscheduled/incomplete tasks,
-        # sort by priority, fit within available_minutes_per_day,
-        # call schedule.add_task for each selected task, then set self.schedule
-        pass
+        """Build a priority-sorted Schedule for _plan_date within the owner's daily time budget."""
+        schedule = Schedule(self, _plan_date, _plan_date)
+
+        # Candidates: incomplete tasks not yet scheduled on another day
+        candidates = [
+            task for task in self.collect_all_tasks()
+            if not task.is_completed and task.scheduled_at is None
+        ]
+
+        # Sort by priority (ascending = highest first), then time-of-day preference
+        candidates.sort(key=lambda t: (t.priority, _TIME_ORDER.get(t.preferred_time_of_day, 99)))
+
+        minutes_used = 0
+        for task in candidates:
+            if minutes_used + task.estimated_minutes > self.available_minutes_per_day:
+                continue  # skip tasks that don't fit; keep trying smaller ones
+            schedule.add_task(task, _plan_date)
+            minutes_used += task.estimated_minutes
+
+        self.schedule = schedule
+        return schedule
